@@ -1,40 +1,190 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/pages/api-reference/create-next-app).
+# Disease Data Analysis Dashboard
 
-## Getting Started
+A comprehensive Next.js dashboard for analyzing disease survey data with AI-powered insights and interactive visualizations.
 
-First, run the development server:
+## Features
+
+- **Interactive Data Visualization**: Generate bar, line, and pie charts based on disease and demographic data
+- **AI-Powered Chat Interface**: Ask questions about the data using OpenAI integration
+- **Real-time Database Integration**: Connect to MySQL database with disease survey responses
+- **Responsive Design**: Modern, mobile-friendly interface built with Tailwind CSS
+- **Multi-variable Analysis**: Analyze relationships between diseases and variables like age, gender, and season
+- **Downloadable Charts**: Export charts as PNG images
+- **Summary Statistics**: Overview of total diseases, responders, and active surveys
+
+## Database Schema
+
+The dashboard works with the following database structure:
+
+### Tables
+- **diseases**: Disease information (malaria, cholera, heat stress)
+- **questions**: Survey questions for each disease
+- **choices**: Answer choices for questions
+- **responders**: Survey participants
+- **responses**: Individual survey responses linking responders to questions and choices
+
+## Setup Instructions
+
+### 1. Prerequisites
+- Node.js 18+ installed
+- MySQL database with the provided schema
+- OpenAI API access (or compatible endpoint)
+
+### 2. Installation
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Clone or create the project directory
+mkdir disease-dashboard
+cd disease-dashboard
+
+# Install dependencies
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 3. Environment Configuration
 
-You can start editing the page by modifying `pages/index.tsx`. The page auto-updates as you edit the file.
+Create a `.env.local` file in the root directory:
 
-[API routes](https://nextjs.org/docs/pages/building-your-application/routing/api-routes) can be accessed on [http://localhost:3000/api/hello](http://localhost:3000/api/hello). This endpoint can be edited in `pages/api/hello.ts`.
+```env
+# API Configuration
+NEXT_PUBLIC_API_URL=http://localhost:3000/
 
-The `pages/api` directory is mapped to `/api/*`. Files in this directory are treated as [API routes](https://nextjs.org/docs/pages/building-your-application/routing/api-routes) instead of React pages.
+# OpenAI Configuration
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_BASE_URL=https://your-openai-endpoint.com/v1/
+OPENAI_MODEL=gpt-4o
 
-This project uses [`next/font`](https://nextjs.org/docs/pages/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Database Configuration (used in lib/database.js)
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=lavarel
+```
 
-## Learn More
+### 4. Database Setup
 
-To learn more about Next.js, take a look at the following resources:
+Import your existing database or create the tables using the provided schema:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn-pages-router) - an interactive Next.js tutorial.
+```sql
+-- Your existing database schema with diseases, questions, choices, responders, and responses tables
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 5. Run the Application
 
-## Deploy on Vercel
+```bash
+# Development mode
+npm run dev
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+# Production build
+npm run build
+npm start
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/pages/building-your-application/deploying) for more details.
+The application will be available at `http://localhost:3000`
+
+## Usage
+
+### Data Visualization Queries
+
+Structure your queries to include:
+1. **Diseases**: malaria, cholera, heat stress
+2. **Variables**: age, gender, season
+3. **Chart Types**: bar, line, pie
+
+**Example Query:**
+```
+Show me the correlation between Malaria, Cholera and age and gender using a bar and line chart
+```
+
+This will generate:
+```json
+{
+  "Diseases": ["malaria", "cholera"],
+  "Variables": ["age", "gender"],
+  "Chart types": ["bar", "line"]
+}
+```
+
+### Variable Mappings
+
+- **Age**: "Are you older than 35 years old?" → Above 35 / Below 35
+- **Gender**: "Are you a Male or Female?" → Male / Female  
+- **Season**: "Are you treated more during rainy season?" → Rainy Season / Dry Season
+
+### General Questions
+
+Ask general questions about diseases, health, or data analysis:
+```
+What is malaria?
+How does climate change affect disease patterns?
+```
+
+## File Structure
+
+```
+disease-dashboard/
+├── pages/
+│   ├── index.js              # Main dashboard component
+│   └── api/
+│       ├── chat.js           # OpenAI integration
+│       └── data.js           # Database API endpoints
+├── lib/
+│   └── database.js           # Database connection utilities
+├── styles/
+│   └── globals.css           # Global styles and Tailwind CSS
+├── package.json              # Dependencies
+├── tailwind.config.js        # Tailwind configuration
+└── .env.example              # Environment variables template
+```
+
+## API Endpoints
+
+### `/api/chat`
+- **Method**: POST
+- **Purpose**: Process general questions using OpenAI
+- **Body**: `{ message: "your question" }`
+
+### `/api/data`
+- **Method**: GET
+- **Purpose**: Fetch database analytics
+- **Parameters**: 
+  - `type`: analytics, diseases, questions, summary
+  - `diseases`: comma-separated disease names
+  - `variables`: comma-separated variable names
+
+## Chart Features
+
+- **Interactive**: Hover tooltips and legends
+- **Responsive**: Adapts to screen size
+- **Downloadable**: Export as PNG images
+- **Multi-layered**: Group by diseases and variables
+- **Descriptive**: Automatic descriptions below charts
+
+## Troubleshooting
+
+### Database Connection Issues
+- Verify MySQL credentials in environment variables
+- Check if the database server is running
+- Ensure the database schema matches the expected structure
+
+### OpenAI API Issues
+- Verify API key and endpoint URL
+- Check API rate limits and quotas
+- Ensure the model name is correct
+
+### Chart Rendering Issues
+- Check browser console for Chart.js errors
+- Verify data structure matches expected format
+- Ensure all required dependencies are installed
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License.# Afretec-next-js-analysis-dashboard
