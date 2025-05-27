@@ -1,7 +1,20 @@
-import React, { useState, useEffect,ReactElement } from 'react';
+import React, { useState, useEffect,useCallback} from 'react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { toPng } from 'html-to-image';
 import { motion } from 'framer-motion';
+
+// Interface for chat messages
+
+
+// Interface for chart configuration
+interface ChartConfig {
+  type: 'bar' | 'line' | 'pie';
+  variable: string;
+  data: Array<{ name: string; [key: string]: number | string }> | PieChartData[];
+  diseases?: string[];
+  title: string;
+  disease?: string;
+}
 
 // Interface for chat messages
 interface ChatMessage {
@@ -15,16 +28,67 @@ interface ChatMessage {
     significance: string;
     recommendation: string;
   };
-  charts?: any[];
+  charts?: ChartConfig[];
   description?: string;
 }
+
+// Interface for summary data
+interface Summary {
+  totalDiseases: number;
+  totalResponders: number;
+  diseases: Array<{
+    id: string | number;
+    name: string;
+    description?: string;
+  }>;
+  totalResponses: number;
+}
+
+// Interface for chart generation config
+interface ChartGenerationConfig {
+  diseases: string[];
+  variables: string[];
+  chartTypes?: string[]; // Optional, as it may not always be used in generateChartData
+}
+
+// Interface for chart data from API
+// Extend ChartData to include summary
+// Interface for chart data from API
+interface ChartData {
+  diseases: {
+    [disease: string]: {
+      [variable: string]: { [category: string]: number };
+    };
+  };
+  summary?: {
+    correlation: number;
+    pValue: number;
+    significance: string;
+    [key: string]: unknown; // Allow additional fields safely
+  };
+}
+
+// Define the expected API response structure
+interface AnalyticsApiResponse {
+  [disease: string]: {
+    [variable: string]: { [category: string]: number };
+  } | { summary: ChartData['summary'] };
+}
+// Define the type for Pie chart data entries
+interface PieChartData {
+  name: string;
+  value: number;
+}
+
+
+
 
 const Dashboard: React.FC = () => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
-  const [summary, setSummary] = useState<any>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const colors = ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1'];
@@ -56,10 +120,12 @@ const Dashboard: React.FC = () => {
   }, []);
 
   // Generate chart data from API
-  const generateChartData = async (config: any) => {
+  const generateChartData = async (config: ChartGenerationConfig): Promise<ChartData> => {
     const { diseases, variables } = config;
-    if (diseases.length === 0 || variables.length === 0) return null;
-
+    if (diseases.length === 0 || variables.length === 0) {
+      return { diseases: {}, summary: undefined };
+    }
+  
     try {
       const response = await fetch(`/api/data?type=analytics&diseases=${encodeURIComponent(diseases.join(','))}`, {
         method: 'GET',
@@ -69,40 +135,87 @@ const Dashboard: React.FC = () => {
         const errorData = await response.json();
         throw new Error(errorData.message || 'Failed to fetch analytics data');
       }
-      const { data } = await response.json();
-      return data;
+      const { data }: { data: AnalyticsApiResponse | null } = await response.json();
+  
+      // Handle invalid or missing data
+      if (!data || typeof data !== 'object') {
+        return { diseases: {}, summary: undefined };
+      }
+  
+      // Separate diseases and summary
+      const diseaseEntries = Object.entries(data).filter(([key]) => key !== 'summary');
+      const diseasesData: ChartData['diseases'] = diseaseEntries.reduce((acc, [disease, value]) => {
+        if (typeof value === 'object' && value !== null && !('summary' in value)) {
+          acc[disease] = value as { [variable: string]: { [category: string]: number } };
+        }
+        return acc;
+      }, {} as ChartData['diseases']);
+  
+      // Validate summary data
+      let summaryData: ChartData['summary'] = undefined;
+      if ('summary' in data && data.summary && typeof data.summary === 'object' && !Array.isArray(data.summary)) {
+        const potentialSummary: { [key: string]: unknown } = data.summary;
+        if (
+          'correlation' in potentialSummary &&
+          typeof potentialSummary.correlation === 'number' &&
+          'pValue' in potentialSummary &&
+          typeof potentialSummary.pValue === 'number' &&
+          'significance' in potentialSummary &&
+          typeof potentialSummary.significance === 'string'
+        ) {
+          summaryData = {
+            correlation: potentialSummary.correlation,
+            pValue: potentialSummary.pValue,
+            significance: potentialSummary.significance,
+            ...Object.fromEntries(
+              Object.entries(potentialSummary).filter(([key]) => !['correlation', 'pValue', 'significance'].includes(key))
+            ),
+          };
+        }
+      }
+  
+      return {
+        diseases: diseasesData,
+        summary: summaryData,
+      };
     } catch (error) {
       console.error('Error generating chart data:', error);
-      throw error;
+      return { diseases: {}, summary: undefined };
     }
   };
 
+
   // Create chart configuration
-  const createChartConfig = (data: any, config: any) => {
+
+  const createChartConfig = (data: ChartData, config: ChartGenerationConfig): ChartConfig[] => {
     const { diseases, variables, chartTypes } = config;
-    const charts: any[] = [];
-
-    chartTypes.forEach((chartType: string) => {
+    const charts: ChartConfig[] = [];
+  
+    if (!data.diseases || Object.keys(data.diseases).length === 0) {
+      return charts;
+    }
+  
+    chartTypes?.forEach((chartType: string) => {
       variables.forEach((variable: string) => {
-        const chartData: any[] = [];
-        const categories = diseases.length > 0
-          ? Object.keys(data[diseases[0]][variable] || {})
+        const chartData: Array<{ name: string; [key: string]: number | string }> = [];
+        const categories = diseases.length > 0 && diseases[0] in data.diseases && data.diseases[diseases[0]][variable]
+          ? Object.keys(data.diseases[diseases[0]][variable])
           : [];
-
+  
         categories.forEach((category: string) => {
-          const dataPoint: any = { name: category };
+          const dataPoint: { name: string; [key: string]: number | string } = { name: category };
           diseases.forEach((disease: string) => {
-            if (data[disease] && data[disease][variable]) {
-              dataPoint[disease] = data[disease][variable][category] || 0;
+            if (disease in data.diseases && data.diseases[disease][variable]?.[category] !== undefined) {
+              dataPoint[disease] = data.diseases[disease][variable][category] || 0;
             }
           });
           chartData.push(dataPoint);
         });
-
+  
         if (chartType === 'pie') {
           diseases.forEach((disease: string) => {
-            if (data[disease] && data[disease][variable]) {
-              const pieData = Object.entries(data[disease][variable]).map(([key, value]) => ({
+            if (disease in data.diseases && data.diseases[disease][variable]) {
+              const pieData: PieChartData[] = Object.entries(data.diseases[disease][variable]).map(([key, value]) => ({
                 name: key,
                 value: value as number,
               }));
@@ -110,28 +223,27 @@ const Dashboard: React.FC = () => {
                 type: chartType,
                 variable,
                 disease,
-                data: pieData,
+                data: pieData, // TypeScript knows this is PieChartData[]
                 title: `${disease.charAt(0).toUpperCase() + disease.slice(1)} Distribution by ${variable.charAt(0).toUpperCase() + variable.slice(1)}`,
               });
             }
           });
         } else {
           charts.push({
-            type: chartType,
+            type: chartType as 'bar' | 'line',
             variable,
-            data: chartData,
+            data: chartData, // TypeScript knows this is Array<{ name: string; [key: string]: number | string }>
             diseases,
             title: `${variable.charAt(0).toUpperCase() + variable.slice(1)} Distribution by Disease (${chartType.charAt(0).toUpperCase() + chartType.slice(1)} Chart)`,
           });
         }
       });
     });
-
+  
     return charts;
   };
-
   // Analyze query with AI
-  const analyzeQuery = async (query: string) => {
+const analyzeQuery = async (query: string) => {
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -195,151 +307,153 @@ const Dashboard: React.FC = () => {
   };
 
   // Generate description with AI
-  const generateDescriptionWithAI = async (config: any, data: any) => {
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `Generate a concise description for this data visualization:
-            Diseases: ${config.diseases.join(', ')}
-            Variables: ${config.variables.join(', ')}
-            Chart Types: ${config.chartTypes.join(', ')}
-            Data Summary: ${JSON.stringify(data.summary)}`,
-        }),
-      });
-      const result = await response.json();
-      return result.reply || '';
-    } catch (error) {
-      console.error('Error generating description:', error);
-      return '';
-    }
-  };
+// Generate description with AI
+const generateDescriptionWithAI = async (config: ChartGenerationConfig, data: ChartData): Promise<string> => {
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `Generate a concise description for this data visualization:
+          Diseases: ${config.diseases.join(', ')}
+          Variables: ${config.variables.join(', ')}
+          Chart Types: ${config.chartTypes?.join(', ') ?? 'bar'}
+          Data Summary: ${JSON.stringify(data.summary ?? {})}`,
+      }),
+    });
+    const result = await response.json();
+    return result.reply || '';
+  } catch (error) {
+    console.error('Error generating description:', error);
+    return '';
+  }
+};
 
   // Simulate chat with animations
-  const simulateChat = async () => {
-    setLoading(true);
-    setIsAnimating(true);
-    setChatMessages([]);
+// Memoize simulateChat to ensure stable reference
+const simulateChat = useCallback(async () => {
+  setLoading(true);
+  setIsAnimating(true);
+  setChatMessages([]);
 
-    const userQuery = query.trim() || "Show me the correlation between Malaria, Cholera and age/gender using bar and line charts";
+  const userQuery = query.trim() || "Show me the correlation between Malaria, Cholera and age/gender using bar and line charts";
 
-    setTimeout(() => {
-      setChatMessages([{
-        type: 'user',
-        content: 'text',
-        text: userQuery,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }]);
-    }, 500);
+  setTimeout(() => {
+    setChatMessages([{
+      type: 'user',
+      content: 'text',
+      text: userQuery,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }]);
+  }, 500);
 
-    setTimeout(() => {
-      setChatMessages((prev) => [...prev, {
-        type: 'bot',
-        content: 'typing',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }]);
-    }, 1500);
+  setTimeout(() => {
+    setChatMessages((prev) => [...prev, {
+      type: 'bot',
+      content: 'typing',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }]);
+  }, 1500);
 
-    try {
-      const analyzedQuery = await analyzeQuery(userQuery);
-      const config = await parseQueryWithAI(analyzedQuery);
+  try {
+    const analyzedQuery = await analyzeQuery(userQuery);
+    const config = await parseQueryWithAI(analyzedQuery);
 
-      if (config.diseases.length === 0 && config.variables.length === 0) {
-        const aiResponse = await getAIResponse(analyzedQuery);
-        setTimeout(() => {
-          setChatMessages((prev) => prev.map((msg) =>
-            msg.content === 'typing'
-              ? {
-                  ...msg,
-                  content: 'text',
-                  text: aiResponse,
-                }
-              : msg
-          ));
-        }, 3000);
-      } else {
-        const data = await generateChartData(config);
-        if (data) {
-          const charts = createChartConfig(data, config);
-          const desc = await generateDescriptionWithAI(config, data);
-
-          setTimeout(() => {
-            setChatMessages((prev) => prev.map((msg) =>
-              msg.content === 'typing'
-                ? {
-                    ...msg,
-                    content: 'analysis',
-                    analysis: {
-                      correlation: data.summary?.correlation || 0.72,
-                      pValue: data.summary?.pValue || 0.003,
-                      significance: data.summary?.significance || 'High',
-                      recommendation: desc || 'Strong correlation detected between age groups and disease prevalence',
-                    },
-                  }
-                : msg
-            ));
-          }, 3000);
-
-          setTimeout(() => {
-            setChatMessages((prev) => [...prev, {
-              type: 'bot',
-              content: 'charts',
-              charts,
-              description: desc,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            }]);
-          }, 4000);
-        } else {
-          setTimeout(() => {
-            setChatMessages((prev) => prev.map((msg) =>
-              msg.content === 'typing'
-                ? {
-                    ...msg,
-                    content: 'text',
-                    text: 'Sorry, I could not generate the requested visualization. Please check your query and try again.',
-                  }
-                : msg
-            ));
-          }, 3000);
-        }
-      }
-    } catch (error) {
-      console.error('Error:', error);
+    if (config.diseases.length === 0 && config.variables.length === 0) {
+      const aiResponse = await getAIResponse(analyzedQuery);
       setTimeout(() => {
         setChatMessages((prev) => prev.map((msg) =>
           msg.content === 'typing'
             ? {
                 ...msg,
                 content: 'text',
-                text: 'Sorry, there was an error processing your request. Please try again later.',
+                text: aiResponse,
               }
             : msg
         ));
       }, 3000);
-    }
+    } else {
+      const data = await generateChartData(config);
+      if (data) {
+        const charts = createChartConfig(data, config);
+        const desc = await generateDescriptionWithAI(config, data);
 
-    setLoading(false);
-    setTimeout(() => setIsAnimating(false), 4500);
-  };
+        setTimeout(() => {
+          setChatMessages((prev) => prev.map((msg) =>
+            msg.content === 'typing'
+              ? {
+                  ...msg,
+                  content: 'analysis',
+                  analysis: {
+                    correlation: data.summary?.correlation || 0.72,
+                    pValue: data.summary?.pValue || 0.003,
+                    significance: data.summary?.significance || 'High',
+                    recommendation: desc || 'Strong correlation detected between age groups and disease prevalence',
+                  },
+                }
+              : msg
+          ));
+        }, 3000);
 
-  // Auto-play animation on mount
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      simulateChat();
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Restart animation every 5 minutes
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!loading) {
-        simulateChat();
+        setTimeout(() => {
+          setChatMessages((prev) => [...prev, {
+            type: 'bot',
+            content: 'charts',
+            charts,
+            description: desc,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          }]);
+        }, 4000);
+      } else {
+        setTimeout(() => {
+          setChatMessages((prev) => prev.map((msg) =>
+            msg.content === 'typing'
+              ? {
+                  ...msg,
+                  content: 'text',
+                  text: 'Sorry, I could not generate the requested visualization. Please check your query and try again.',
+                }
+              : msg
+          ));
+        }, 3000);
       }
-    }, 300000); // 5 minutes
-    return () => clearInterval(interval);
-  }, [loading]);
+    }
+  } catch (error) {
+    console.error('Error:', error);
+    setTimeout(() => {
+      setChatMessages((prev) => prev.map((msg) =>
+        msg.content === 'typing'
+          ? {
+              ...msg,
+              content: 'text',
+              text: 'Sorry, there was an error processing your request. Please try again later.',
+            }
+          : msg
+      ));
+    }, 3000);
+  }
+
+  setLoading(false);
+  setTimeout(() => setIsAnimating(false), 4500);
+}, [query]); // Add query as a dependency since it's used in simulateChat
+
+// Auto-play animation on mount
+useEffect(() => {
+  const timer = setTimeout(() => {
+    simulateChat();
+  }, 1000);
+  return () => clearTimeout(timer);
+}, [simulateChat]); // Include simulateChat in the dependency array
+
+// Restart animation every 5 minutes
+useEffect(() => {
+  const interval = setInterval(() => {
+    if (!loading) {
+      simulateChat();
+    }
+  }, 300000); // 5 minutes
+  return () => clearInterval(interval);
+}, [loading, simulateChat]); // Include loading and simulateChat
 
   // Download chart
   const downloadChart = async (chartId: string, fileName: string) => {
@@ -358,30 +472,26 @@ const Dashboard: React.FC = () => {
   };
 
   // Render chart
-// Render chart
-const renderChart = (chart: any, index: number) => {
+  // Define the type for Pie chart data entries
+const isPieChartData = (data: ChartConfig['data']): data is PieChartData[] => {
+  return Array.isArray(data) && data.every((item) => 'name' in item && 'value' in item && typeof item.value === 'number');
+};
+
+const renderChart = (chart: ChartConfig, index: number) => {
   const chartId = `chart-${index}-${Date.now()}`;
   const fileName = chart.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
 
-  // Define the chart component to ensure a single child for ResponsiveContainer
-  let ChartComponent: ReactElement | null = null;
+  let ChartComponent: React.ReactElement;
 
   if (chart.type === 'bar') {
     ChartComponent = (
-      <BarChart data={chart.data}>
+      <BarChart data={chart.data as Array<{ name: string; [key: string]: number | string }>} >
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="name" fontSize={12} />
         <YAxis fontSize={12} />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: 'white',
-            border: '1px solid #e5e7eb',
-            borderRadius: '8px',
-            fontSize: '14px',
-          }}
-        />
+        <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px' }} />
         <Legend />
-        {chart.diseases.map((disease: string, idx: number) => (
+        {chart.diseases?.map((disease: string, idx: number) => (
           <Bar
             key={disease}
             dataKey={disease}
@@ -394,20 +504,13 @@ const renderChart = (chart: any, index: number) => {
     );
   } else if (chart.type === 'line') {
     ChartComponent = (
-      <LineChart data={chart.data}>
+      <LineChart data={chart.data as Array<{ name: string; [key: string]: number | string }>} >
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="name" fontSize={12} />
         <YAxis fontSize={12} />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: 'white',
-            border: '1px solid #e5e7eb',
-            borderRadius: '8px',
-            fontSize: '10px',
-          }}
-        />
+        <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '10px' }} />
         <Legend />
-        {chart.diseases.map((disease: string, idx: number) => (
+        {chart.diseases?.map((disease: string, idx: number) => (
           <Line
             key={disease}
             type="monotone"
@@ -421,10 +524,13 @@ const renderChart = (chart: any, index: number) => {
       </LineChart>
     );
   } else if (chart.type === 'pie') {
+    if (!isPieChartData(chart.data)) {
+      return null; // Fallback if data is not in the expected format
+    }
     ChartComponent = (
       <PieChart>
         <Pie
-          data={chart.data}
+          data={chart.data} // Type guard ensures chart.data is PieChartData[]
           cx="50%"
           cy="50%"
           innerRadius={40}
@@ -433,21 +539,16 @@ const renderChart = (chart: any, index: number) => {
           label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
           labelLine={false}
         >
-          {chart.data.map((entry: any, index: number) => (
+          {chart.data.map((entry: PieChartData, index: number) => (
             <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
           ))}
         </Pie>
-        <Tooltip
-          contentStyle={{
-            backgroundColor: 'white',
-            border: '1px solid #e5e7eb',
-            borderRadius: '8px',
-            fontSize: '14px',
-          }}
-        />
+        <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px' }} />
         <Legend />
       </PieChart>
     );
+  } else {
+    return null;
   }
 
   return (
@@ -459,16 +560,8 @@ const renderChart = (chart: any, index: number) => {
           className="p-2 rounded-full hover:bg-gray-100 cursor-pointer transition-colors"
           title="Download Chart"
         >
-          <svg
-            className="h-5 w-5 text-gray-500 hover:text-blue-500 transition-colors"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fillRule="evenodd"
-              d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
-              clipRule="evenodd"
-            />
+          <svg className="h-5 w-5 text-gray-500 hover:text-blue-500 transition-colors" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
           </svg>
         </div>
       </div>
@@ -480,6 +573,7 @@ const renderChart = (chart: any, index: number) => {
     </div>
   );
 };
+
   // Typing indicator component
   const TypingIndicator = () => (
     <div className="flex items-center space-x-1 p-3">
@@ -563,7 +657,7 @@ const renderChart = (chart: any, index: number) => {
                     </div>
                   )}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {message.charts.map((chart: any, idx: number) => renderChart(chart, idx))}
+                    {message.charts.map((chart: ChartConfig, idx: number) => renderChart(chart, idx))}
                   </div>
                 </div>
               ) : message.content === 'text' && message.text ? (
@@ -871,7 +965,7 @@ const renderChart = (chart: any, index: number) => {
               </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {summary.diseases.map((disease: any, index: number) => (
+              {summary.diseases.map((disease: Summary['diseases'][number], index: number) => (
                 <motion.div
                   key={disease.id}
                   initial={{ opacity: 0, y: 20 }}
@@ -915,7 +1009,7 @@ const renderChart = (chart: any, index: number) => {
           <div className="px-6 py-4 bg-gradient-to-r from-gray-800 to-gray-900 text-white rounded-t-3xl">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
-                <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+              <div className={`w-3 h-3 rounded-full ${isAnimating ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`}></div>
                 <h3 className="font-semibold">AI Data Analyst</h3>
               </div>
               <div className="text-sm opacity-75">Live Analysis</div>
@@ -1033,9 +1127,9 @@ const renderChart = (chart: any, index: number) => {
                 <span className="font-medium">bar, line, pie</span>) in your query.
               </p>
               <div className="mt-3 p-3 bg-white rounded-md border border-blue-100 animate-pulse-slow flex justify-between items-center">
-                <p className="text-sm font-mono text-blue-600">
-                  <span className="text-gray-500">Example:</span> "Show correlation between Malaria, Cholera and age/gender using bar and line charts"
-                </p>
+              <p className="text-sm font-mono text-blue-600">
+                <span className="text-gray-500">Example:</span> &quot;Show correlation between Malaria, Cholera and age/gender using bar and line charts&quot;
+              </p>
                 <button
                   onClick={() => navigator.clipboard.writeText('Show correlation between Malaria, Cholera and age/gender using bar and line charts')}
                   className="text-xs flex items-center px-2 py-1 ml-2 bg-blue-50 rounded border border-blue-100 hover:bg-blue-100 transition-colors"
