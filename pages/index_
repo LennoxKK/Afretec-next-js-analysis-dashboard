@@ -1,4 +1,4 @@
-import React, { useState, useEffect,ReactElement } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { toPng } from 'html-to-image';
 import { motion } from 'framer-motion';
@@ -358,128 +358,128 @@ const Dashboard: React.FC = () => {
   };
 
   // Render chart
-// Render chart
-const renderChart = (chart: any, index: number) => {
-  const chartId = `chart-${index}-${Date.now()}`;
-  const fileName = chart.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  const renderChart = (chart: any, index: number) => {
+    const chartId = `chart-${index}-${Date.now()}`;
+    const fileName = chart.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
 
-  // Define the chart component to ensure a single child for ResponsiveContainer
-  let ChartComponent: ReactElement | null = null;
+    // Define the chart component to ensure a single child for ResponsiveContainer
+    let ChartComponent: JSX.Element | null = null;
 
-  if (chart.type === 'bar') {
-    ChartComponent = (
-      <BarChart data={chart.data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="name" fontSize={12} />
-        <YAxis fontSize={12} />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: 'white',
-            border: '1px solid #e5e7eb',
-            borderRadius: '8px',
-            fontSize: '14px',
-          }}
-        />
-        <Legend />
-        {chart.diseases.map((disease: string, idx: number) => (
-          <Bar
-            key={disease}
-            dataKey={disease}
-            fill={colors[idx % colors.length]}
-            name={`${disease.charAt(0).toUpperCase() + disease.slice(1)} Cases`}
-            radius={[0, 0, 0, 0]}
+    if (chart.type === 'bar') {
+      ChartComponent = (
+        <BarChart data={chart.data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <XAxis dataKey="name" fontSize={12} />
+          <YAxis fontSize={12} />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: 'white',
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px',
+              fontSize: '14px',
+            }}
           />
-        ))}
-      </BarChart>
-    );
-  } else if (chart.type === 'line') {
-    ChartComponent = (
-      <LineChart data={chart.data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="name" fontSize={12} />
-        <YAxis fontSize={12} />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: 'white',
-            border: '1px solid #e5e7eb',
-            borderRadius: '8px',
-            fontSize: '10px',
-          }}
-        />
-        <Legend />
-        {chart.diseases.map((disease: string, idx: number) => (
-          <Line
-            key={disease}
-            type="monotone"
-            dataKey={disease}
-            stroke={colors[idx % colors.length]}
-            strokeWidth={3}
-            name={`${disease.charAt(0).toUpperCase() + disease.slice(1)} Cases`}
-            dot={{ fill: colors[idx % colors.length], strokeWidth: 2, r: 4 }}
-          />
-        ))}
-      </LineChart>
-    );
-  } else if (chart.type === 'pie') {
-    ChartComponent = (
-      <PieChart>
-        <Pie
-          data={chart.data}
-          cx="50%"
-          cy="50%"
-          innerRadius={40}
-          outerRadius={80}
-          dataKey="value"
-          label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-          labelLine={false}
-        >
-          {chart.data.map((entry: any, index: number) => (
-            <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
-          ))}
-        </Pie>
-        <Tooltip
-          contentStyle={{
-            backgroundColor: 'white',
-            border: '1px solid #e5e7eb',
-            borderRadius: '8px',
-            fontSize: '14px',
-          }}
-        />
-        <Legend />
-      </PieChart>
-    );
-  }
-
-  return (
-    <div key={index} className="bg-gray-50 p-4 rounded-xl">
-      <div className="flex justify-between items-center mb-4">
-        <h4 className="font-medium text-gray-700">{chart.title}</h4>
-        <div
-          onClick={() => downloadChart(chartId, fileName)}
-          className="p-2 rounded-full hover:bg-gray-100 cursor-pointer transition-colors"
-          title="Download Chart"
-        >
-          <svg
-            className="h-5 w-5 text-gray-500 hover:text-blue-500 transition-colors"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fillRule="evenodd"
-              d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
-              clipRule="evenodd"
+          <Legend />
+          {chart.diseases.map((disease: string, idx: number) => (
+            <Bar
+              key={disease}
+              dataKey={disease}
+              fill={colors[idx % colors.length]}
+              name={`${disease.charAt(0).toUpperCase() + disease.slice(1)} Cases`}
+              radius={[4, 4, 0, 0]}
             />
-          </svg>
+          ))}
+        </BarChart>
+      );
+    } else if (chart.type === 'line') {
+      ChartComponent = (
+        <LineChart data={chart.data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <XAxis dataKey="name" fontSize={12} />
+          <YAxis fontSize={12} />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: 'white',
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px',
+              fontSize: '14px',
+            }}
+          />
+          <Legend />
+          {chart.diseases.map((disease: string, idx: number) => (
+            <Line
+              key={disease}
+              type="monotone"
+              dataKey={disease}
+              stroke={colors[idx % colors.length]}
+              strokeWidth={3}
+              name={`${disease.charAt(0).toUpperCase() + disease.slice(1)} Cases`}
+              dot={{ fill: colors[idx % colors.length], strokeWidth: 2, r: 4 }}
+            />
+          ))}
+        </LineChart>
+      );
+    } else if (chart.type === 'pie') {
+      ChartComponent = (
+        <PieChart>
+          <Pie
+            data={chart.data}
+            cx="50%"
+            cy="50%"
+            innerRadius={40}
+            outerRadius={80}
+            dataKey="value"
+            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+            labelLine={false}
+          >
+            {chart.data.map((entry: any, index: number) => (
+              <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
+            ))}
+          </Pie>
+          <Tooltip
+            contentStyle={{
+              backgroundColor: 'white',
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px',
+              fontSize: '14px',
+            }}
+          />
+          <Legend />
+        </PieChart>
+      );
+    }
+
+    return (
+      <div key={index} className="bg-gray-50 p-4 rounded-xl">
+        <div className="flex justify-between items-center mb-4">
+          <h4 className="font-medium text-gray-700">{chart.title}</h4>
+          <div
+            onClick={() => downloadChart(chartId, fileName)}
+            className="p-2 rounded-full hover:bg-gray-100 cursor-pointer transition-colors"
+            title="Download Chart"
+          >
+            <svg
+              className="h-5 w-5 text-gray-500 hover:text-blue-500 transition-colors"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fillRule="evenodd"
+                d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </div>
+        </div>
+        <div id={chartId}>
+          <ResponsiveContainer width="100%" height={200}>
+            {ChartComponent}
+          </ResponsiveContainer>
         </div>
       </div>
-      <div id={chartId}>
-        <ResponsiveContainer width="100%" height={200}>
-          {ChartComponent}
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-};
+    );
+  };
+
   // Typing indicator component
   const TypingIndicator = () => (
     <div className="flex items-center space-x-1 p-3">
