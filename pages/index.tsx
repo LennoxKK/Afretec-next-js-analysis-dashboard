@@ -1,1240 +1,203 @@
-import React, { useState, useEffect,useCallback} from 'react';
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { toPng } from 'html-to-image';
-import { motion } from 'framer-motion';
-
-// Interface for chat messages
-
-
-// Interface for chart configuration
-interface ChartConfig {
-  type: 'bar' | 'line' | 'pie';
-  variable: string;
-  data: Array<{ name: string; [key: string]: number | string }> | PieChartData[];
-  diseases?: string[];
-  title: string;
-  disease?: string;
-}
-
-// Interface for chat messages
-interface ChatMessage {
-  type: 'user' | 'bot';
-  content: 'text' | 'typing' | 'analysis' | 'charts';
-  timestamp: string;
-  text?: string;
-  analysis?: {
-    correlation: number;
-    pValue: number;
-    significance: string;
-    recommendation: string;
-  };
-  charts?: ChartConfig[];
-  description?: string;
-}
-
-// Interface for summary data
-interface Summary {
-  totalDiseases: number;
-  totalResponders: number;
-  diseases: Array<{
-    id: string | number;
-    name: string;
-    description?: string;
-  }>;
-  totalResponses: number;
-}
-
-// Interface for chart generation config
-interface ChartGenerationConfig {
-  diseases: string[];
-  variables: string[];
-  chartTypes?: string[]; // Optional, as it may not always be used in generateChartData
-}
-
-// Interface for chart data from API
-// Extend ChartData to include summary
-// Interface for chart data from API
-interface ChartData {
-  diseases: {
-    [disease: string]: {
-      [variable: string]: { [category: string]: number };
-    };
-  };
-  summary?: {
-    correlation: number;
-    pValue: number;
-    significance: string;
-    [key: string]: unknown; // Allow additional fields safely
-  };
-}
-
-// Define the expected API response structure
-interface AnalyticsApiResponse {
-  [disease: string]: {
-    [variable: string]: { [category: string]: number };
-  } | { summary: ChartData['summary'] };
-}
-// Define the type for Pie chart data entries
-interface PieChartData {
-  name: string;
-  value: number;
-}
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { FiMenu, FiX } from 'react-icons/fi';
+import Sidebar from './components/Sidebar';
+import FullGuide from './components/FullGuide';
+import { handleSendMessage } from './src/utils/chatUtils';
+import { API_CONFIG } from './api/config/endpoints';
+import { v4 as uuidv4 } from 'uuid';
+import { Chat } from './components/Chat';
+import { Message, ChartData } from './src/types/chat';
 
 
 
 
-const Dashboard: React.FC = () => {
-  const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [isAnimating, setIsAnimating] = useState(false);
-  const [summary, setSummary] = useState<Summary | null>(null);
+
+const ChatApp = () => {
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [charts, setCharts] = useState<ChartData[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showFullGuide, setShowFullGuide] = useState(false);
+  const processedChartIds = useRef<Set<string>>(new Set());
 
-  const colors = ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1'];
-
-  // Toggle sidebar
-  const toggleSidebar = () => {
-    setIsSidebarOpen(!isSidebarOpen);
-  };
-
-  // Fetch summary data
+  // Handle responsive behavior
   useEffect(() => {
-    const fetchSummary = async () => {
-      try {
-        const res = await fetch('/api/data?type=summary');
-        if (!res.ok) throw new Error('Failed to fetch summary data');
-        const json = await res.json();
-        setSummary(json.data);
-      } catch (err) {
-        console.error('Error loading summary:', err);
-        setSummary({
-          totalDiseases: 0,
-          totalResponders: 0,
-          diseases: [],
-          totalResponses: 0,
-        });
+    const handleResize = () => {
+      const isMobileView = window.innerWidth < 768;
+      setIsMobile(isMobileView);
+      if (!isMobileView) {
+        setIsSidebarOpen(true);
       }
     };
-    fetchSummary();
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Generate chart data from API
-  const generateChartData = async (config: ChartGenerationConfig): Promise<ChartData> => {
-    const { diseases, variables } = config;
-    if (diseases.length === 0 || variables.length === 0) {
-      return { diseases: {}, summary: undefined };
-    }
-  
-    try {
-      const response = await fetch(`/api/data?type=analytics&diseases=${encodeURIComponent(diseases.join(','))}`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to fetch analytics data');
-      }
-      const { data }: { data: AnalyticsApiResponse | null } = await response.json();
-  
-      // Handle invalid or missing data
-      if (!data || typeof data !== 'object') {
-        return { diseases: {}, summary: undefined };
-      }
-  
-      // Separate diseases and summary
-      const diseaseEntries = Object.entries(data).filter(([key]) => key !== 'summary');
-      const diseasesData: ChartData['diseases'] = diseaseEntries.reduce((acc, [disease, value]) => {
-        if (typeof value === 'object' && value !== null && !('summary' in value)) {
-          acc[disease] = value as { [variable: string]: { [category: string]: number } };
-        }
-        return acc;
-      }, {} as ChartData['diseases']);
-  
-      // Validate summary data
-      let summaryData: ChartData['summary'] = undefined;
-      if ('summary' in data && data.summary && typeof data.summary === 'object' && !Array.isArray(data.summary)) {
-        const potentialSummary: { [key: string]: unknown } = data.summary;
-        if (
-          'correlation' in potentialSummary &&
-          typeof potentialSummary.correlation === 'number' &&
-          'pValue' in potentialSummary &&
-          typeof potentialSummary.pValue === 'number' &&
-          'significance' in potentialSummary &&
-          typeof potentialSummary.significance === 'string'
-        ) {
-          summaryData = {
-            correlation: potentialSummary.correlation,
-            pValue: potentialSummary.pValue,
-            significance: potentialSummary.significance,
-            ...Object.fromEntries(
-              Object.entries(potentialSummary).filter(([key]) => !['correlation', 'pValue', 'significance'].includes(key))
-            ),
-          };
-        }
-      }
-  
-      return {
-        diseases: diseasesData,
-        summary: summaryData,
-      };
-    } catch (error) {
-      console.error('Error generating chart data:', error);
-      return { diseases: {}, summary: undefined };
-    }
-  };
+  const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
 
+  // Process charts data
+  useEffect(() => {
+    if (charts.length === 0) return;
 
-  // Create chart configuration
-
-  const createChartConfig = (data: ChartData, config: ChartGenerationConfig): ChartConfig[] => {
-    const { diseases, variables, chartTypes } = config;
-    const charts: ChartConfig[] = [];
-  
-    if (!data.diseases || Object.keys(data.diseases).length === 0) {
-      return charts;
-    }
-  
-    chartTypes?.forEach((chartType: string) => {
-      variables.forEach((variable: string) => {
-        const chartData: Array<{ name: string; [key: string]: number | string }> = [];
-        const categories = diseases.length > 0 && diseases[0] in data.diseases && data.diseases[diseases[0]][variable]
-          ? Object.keys(data.diseases[diseases[0]][variable])
-          : [];
-  
-        categories.forEach((category: string) => {
-          const dataPoint: { name: string; [key: string]: number | string } = { name: category };
-          diseases.forEach((disease: string) => {
-            if (disease in data.diseases && data.diseases[disease][variable]?.[category] !== undefined) {
-              dataPoint[disease] = data.diseases[disease][variable][category] || 0;
-            }
+    const newChartMessages: Message[] = [];
+    
+    charts.forEach(chart => {
+      if (!processedChartIds.current.has(chart.id)) {
+        processedChartIds.current.add(chart.id);
+        
+        chart.chartTypes.forEach(chartType => {
+          newChartMessages.push({
+            id: uuidv4(),
+            sender: 'bot',
+            type: 'chart',
+            text: `📊 ${chartType} chart for "${chart.title}"`,
+            timestamp: new Date(),
+            chartData: {
+              ...chart,
+              chartTypes: chart.chartTypes,
+              chartType: chartType
+            },
           });
-          chartData.push(dataPoint);
         });
-  
-        if (chartType === 'pie') {
-          diseases.forEach((disease: string) => {
-            if (disease in data.diseases && data.diseases[disease][variable]) {
-              const pieData: PieChartData[] = Object.entries(data.diseases[disease][variable]).map(([key, value]) => ({
-                name: key,
-                value: value as number,
-              }));
-              charts.push({
-                type: chartType,
-                variable,
-                disease,
-                data: pieData, // TypeScript knows this is PieChartData[]
-                title: `${disease.charAt(0).toUpperCase() + disease.slice(1)} Distribution by ${variable.charAt(0).toUpperCase() + variable.slice(1)}`,
-              });
-            }
-          });
-        } else {
-          charts.push({
-            type: chartType as 'bar' | 'line',
-            variable,
-            data: chartData, // TypeScript knows this is Array<{ name: string; [key: string]: number | string }>
-            diseases,
-            title: `${variable.charAt(0).toUpperCase() + variable.slice(1)} Distribution by Disease (${chartType.charAt(0).toUpperCase() + chartType.slice(1)} Chart)`,
-          });
-        }
-      });
-    });
-  
-    return charts;
-  };
-  // Analyze query with AI
-const analyzeQuery = async (query: string) => {
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `Please analyze and correct this query for disease data visualization if needed: "${query}". Return only the corrected query without any additional explanation.`,
-        }),
-      });
-      if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
-      const data = await response.json();
-      return data.reply || query;
-    } catch (error) {
-      console.error('Error analyzing query:', error);
-      return query;
-    }
-  };
-
-  // Parse query with AI
-  const parseQueryWithAI = async (query: string) => {
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `Extract visualization parameters from: "${query}"`,
-          isJSONRequest: true,
-        }),
-      });
-      if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
-      const data = await response.json();
-      let jsonString = typeof data.reply === 'string' ? data.reply : JSON.stringify(data.reply);
-      jsonString = jsonString.replace(/```json|```/g, '').trim();
-      const parsed = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
-      return {
-        diseases: Array.isArray(parsed.diseases) ? parsed.diseases : [],
-        variables: Array.isArray(parsed.variables) ? parsed.variables : [],
-        chartTypes: Array.isArray(parsed.chartTypes) ? parsed.chartTypes : ['bar'],
-      };
-    } catch (error) {
-      console.error('Error parsing query with AI:', error);
-      return { diseases: [], variables: [], chartTypes: ['bar'] };
-    }
-  };
-
-  // Get AI response for general questions
-  const getAIResponse = async (query: string) => {
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `User asked: "${query}". Please provide a helpful response about disease data analysis.`,
-        }),
-      });
-      const data = await response.json();
-      return data.reply || 'I could not generate a response. Please try again.';
-    } catch (error) {
-      console.error('Error getting AI response:', error);
-      return 'Sorry, there was an error generating a response.';
-    }
-  };
-
-  // Generate description with AI
-// Generate description with AI
-const generateDescriptionWithAI = async (config: ChartGenerationConfig, data: ChartData): Promise<string> => {
-  try {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: `Generate a concise description for this data visualization:
-          Diseases: ${config.diseases.join(', ')}
-          Variables: ${config.variables.join(', ')}
-          Chart Types: ${config.chartTypes?.join(', ') ?? 'bar'}
-          Data Summary: ${JSON.stringify(data.summary ?? {})}`,
-      }),
-    });
-    const result = await response.json();
-    return result.reply || '';
-  } catch (error) {
-    console.error('Error generating description:', error);
-    return '';
-  }
-};
-
-  // Simulate chat with animations
-// Memoize simulateChat to ensure stable reference
-const simulateChat = useCallback(async () => {
-  setLoading(true);
-  setIsAnimating(true);
-  setChatMessages([]);
-
-  const userQuery = query.trim() || "Show me the correlation between Malaria, Cholera and age/gender using bar and line charts";
-
-  setTimeout(() => {
-    setChatMessages([{
-      type: 'user',
-      content: 'text',
-      text: userQuery,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    }]);
-  }, 500);
-
-  setTimeout(() => {
-    setChatMessages((prev) => [...prev, {
-      type: 'bot',
-      content: 'typing',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    }]);
-  }, 1500);
-
-  try {
-    const analyzedQuery = await analyzeQuery(userQuery);
-    const config = await parseQueryWithAI(analyzedQuery);
-
-    if (config.diseases.length === 0 && config.variables.length === 0) {
-      const aiResponse = await getAIResponse(analyzedQuery);
-      setTimeout(() => {
-        setChatMessages((prev) => prev.map((msg) =>
-          msg.content === 'typing'
-            ? {
-                ...msg,
-                content: 'text',
-                text: aiResponse,
-              }
-            : msg
-        ));
-      }, 3000);
-    } else {
-      const data = await generateChartData(config);
-      if (data) {
-        const charts = createChartConfig(data, config);
-        const desc = await generateDescriptionWithAI(config, data);
-
-        setTimeout(() => {
-          setChatMessages((prev) => prev.map((msg) =>
-            msg.content === 'typing'
-              ? {
-                  ...msg,
-                  content: 'analysis',
-                  analysis: {
-                    correlation: data.summary?.correlation || 0.72,
-                    pValue: data.summary?.pValue || 0.003,
-                    significance: data.summary?.significance || 'High',
-                    recommendation: desc || 'Strong correlation detected between age groups and disease prevalence',
-                  },
-                }
-              : msg
-          ));
-        }, 3000);
-
-        setTimeout(() => {
-          setChatMessages((prev) => [...prev, {
-            type: 'bot',
-            content: 'charts',
-            charts,
-            description: desc,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          }]);
-        }, 4000);
-      } else {
-        setTimeout(() => {
-          setChatMessages((prev) => prev.map((msg) =>
-            msg.content === 'typing'
-              ? {
-                  ...msg,
-                  content: 'text',
-                  text: 'Sorry, I could not generate the requested visualization. Please check your query and try again.',
-                }
-              : msg
-          ));
-        }, 3000);
       }
+    });
+
+    if (newChartMessages.length > 0) {
+      setMessages(prev => [...prev, ...newChartMessages]);
     }
-  } catch (error) {
-    console.error('Error:', error);
-    setTimeout(() => {
-      setChatMessages((prev) => prev.map((msg) =>
-        msg.content === 'typing'
-          ? {
-              ...msg,
-              content: 'text',
-              text: 'Sorry, there was an error processing your request. Please try again later.',
-            }
-          : msg
-      ));
-    }, 3000);
-  }
+    
+    setCharts([]);
+  }, [charts]);
 
-  setLoading(false);
-  setTimeout(() => setIsAnimating(false), 4500);
-}, [query]); // Add query as a dependency since it's used in simulateChat
+  const handleSendMessageWrapper = useCallback(
+    async (input: string) => {
+      setIsLoading(true);
+      
+      const userMessage: Message = {
+        id: uuidv4(),
+        sender: 'user',
+        type: 'text',
+        text: input,
+        timestamp: new Date(),
+      };
 
-// Auto-play animation on mount
-useEffect(() => {
-  const timer = setTimeout(() => {
-    simulateChat();
-  }, 1000);
-  return () => clearTimeout(timer);
-}, [simulateChat]); // Include simulateChat in the dependency array
+      setMessages((prev) => [...prev, userMessage]);
 
-// Restart animation every 5 minutes
-useEffect(() => {
-  const interval = setInterval(() => {
-    if (!loading) {
-      simulateChat();
-    }
-  }, 300000); // 5 minutes
-  return () => clearInterval(interval);
-}, [loading, simulateChat]); // Include loading and simulateChat
+      const typingMessage: Message = {
+        id: uuidv4(),
+        sender: 'bot',
+        type: 'typing',
+        text: '',
+        timestamp: new Date(),
+      };
 
-  // Download chart
-  const downloadChart = async (chartId: string, fileName: string) => {
-    const chartElement = document.getElementById(chartId);
-    if (!chartElement) return;
+      setMessages((prev) => [...prev, typingMessage]);
 
-    try {
-      const dataUrl = await toPng(chartElement);
-      const link = document.createElement('a');
-      link.download = `${fileName}.png`;
-      link.href = dataUrl;
-      link.click();
-    } catch (error) {
-      console.error('Error downloading chart:', error);
-    }
-  };
-
-  // Render chart
-  // Define the type for Pie chart data entries
-const isPieChartData = (data: ChartConfig['data']): data is PieChartData[] => {
-  return Array.isArray(data) && data.every((item) => 'name' in item && 'value' in item && typeof item.value === 'number');
-};
-
-const renderChart = (chart: ChartConfig, index: number) => {
-  const chartId = `chart-${index}-${Date.now()}`;
-  const fileName = chart.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-
-  let ChartComponent: React.ReactElement;
-
-  if (chart.type === 'bar') {
-    ChartComponent = (
-      <BarChart data={chart.data as Array<{ name: string; [key: string]: number | string }>} >
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="name" fontSize={12} />
-        <YAxis fontSize={12} />
-        <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px' }} />
-        <Legend />
-        {chart.diseases?.map((disease: string, idx: number) => (
-          <Bar
-            key={disease}
-            dataKey={disease}
-            fill={colors[idx % colors.length]}
-            name={`${disease.charAt(0).toUpperCase() + disease.slice(1)} Cases`}
-            radius={[0, 0, 0, 0]}
-          />
-        ))}
-      </BarChart>
-    );
-  } else if (chart.type === 'line') {
-    ChartComponent = (
-      <LineChart data={chart.data as Array<{ name: string; [key: string]: number | string }>} >
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="name" fontSize={12} />
-        <YAxis fontSize={12} />
-        <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '10px' }} />
-        <Legend />
-        {chart.diseases?.map((disease: string, idx: number) => (
-          <Line
-            key={disease}
-            type="monotone"
-            dataKey={disease}
-            stroke={colors[idx % colors.length]}
-            strokeWidth={3}
-            name={`${disease.charAt(0).toUpperCase() + disease.slice(1)} Cases`}
-            dot={{ fill: colors[idx % colors.length], strokeWidth: 2, r: 4 }}
-          />
-        ))}
-      </LineChart>
-    );
-  } else if (chart.type === 'pie') {
-    if (!isPieChartData(chart.data)) {
-      return null; // Fallback if data is not in the expected format
-    }
-    ChartComponent = (
-      <PieChart>
-        <Pie
-          data={chart.data} // Type guard ensures chart.data is PieChartData[]
-          cx="50%"
-          cy="50%"
-          innerRadius={40}
-          outerRadius={80}
-          dataKey="value"
-          label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-          labelLine={false}
-        >
-          {chart.data.map((entry: PieChartData, index: number) => (
-            <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
-          ))}
-        </Pie>
-        <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px' }} />
-        <Legend />
-      </PieChart>
-    );
-  } else {
-    return null;
-  }
-
-  return (
-    <div key={index} className="bg-gray-50 p-4 rounded-xl">
-      <div className="flex justify-between items-center mb-4">
-        <h4 className="font-medium text-gray-700">{chart.title}</h4>
-        <div
-          onClick={() => downloadChart(chartId, fileName)}
-          className="p-2 rounded-full hover:bg-gray-100 cursor-pointer transition-colors"
-          title="Download Chart"
-        >
-          <svg className="h-5 w-5 text-gray-500 hover:text-blue-500 transition-colors" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-          </svg>
-        </div>
-      </div>
-      <div id={chartId}>
-        <ResponsiveContainer width="100%" height={200}>
-          {ChartComponent}
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-};
-
-  // Typing indicator component
-  const TypingIndicator = () => (
-    <div className="flex items-center space-x-1 p-3">
-      <div className="flex space-x-1">
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
-            style={{ animationDelay: `${i * 0.2}s` }}
-          />
-        ))}
-      </div>
-      <span className="text-sm text-gray-500 ml-2">Analyzing data...</span>
-    </div>
-  );
-
-  // Chat message component
-  const ChatMessage = ({ message, index }: { message: ChatMessage; index: number }) => {
-    const isUser = message.type === 'user';
-
-    return (
-      <div
-        className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-6 animate-fadeInUp`}
-        style={{ animationDelay: `${index * 0.2}s` }}
-      >
-        <div className={`max-w-4xl ${isUser ? 'order-2' : 'order-1'}`}>
-          <div className={`flex items-end space-x-3 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`}>
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-lg ${
-              isUser ? 'bg-gradient-to-br from-blue-500 to-indigo-600' : 'bg-gradient-to-br from-gray-700 to-gray-900'
-            }`}>
-              {isUser ? (
-                <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                </svg>
-              ) : (
-                <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              )}
-            </div>
-            <div className={`rounded-2xl px-6 py-4 shadow-lg backdrop-blur-sm ${
-              isUser
-                ? 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white'
-                : 'bg-white/90 border border-gray-200 text-gray-800'
-            }`}>
-              {message.content === 'typing' ? (
-                <TypingIndicator />
-              ) : message.content === 'analysis' && message.analysis ? (
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-2 mb-3">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <span className="font-semibold text-lg">Analysis Complete</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div className="bg-blue-50 p-3 rounded-lg">
-                      <div className="font-medium text-blue-900">Correlation</div>
-                      <div className="text-2xl font-bold text-blue-700">{message.analysis.correlation}</div>
-                    </div>
-                    <div className="bg-green-50 p-3 rounded-lg">
-                      <div className="font-medium text-green-900">P-Value</div>
-                      <div className="text-2xl font-bold text-green-700">{message.analysis.pValue}</div>
-                    </div>
-                  </div>
-                  <div className="bg-amber-50 p-3 rounded-lg">
-                    <div className="font-medium text-amber-900 mb-1">Key Insight</div>
-                    <div className="text-sm text-amber-800">{message.analysis.recommendation}</div>
-                  </div>
-                </div>
-              ) : message.content === 'charts' && message.charts ? (
-                <div className="space-y-6">
-                  <div className="text-lg font-semibold mb-4 flex items-center">
-                    <svg className="w-5 h-5 mr-2 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
-                    </svg>
-                    Visual Analysis
-                  </div>
-                  {message.description && (
-                    <div className="bg-white p-4 rounded-lg border border-gray-100">
-                      <h4 className="font-medium text-gray-700 mb-2">Visualization Description</h4>
-                      <p className="text-gray-600 text-sm">{message.description}</p>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {message.charts.map((chart: ChartConfig, idx: number) => renderChart(chart, idx))}
-                  </div>
-                </div>
-              ) : message.content === 'text' && message.text ? (
-                <div className="text-sm leading-relaxed">{message.text}</div>
-              ) : (
-                <div className="text-sm leading-relaxed">{message.content}</div>
-              )}
-              <div className={`text-xs mt-2 opacity-70 ${isUser ? 'text-blue-100' : 'text-gray-500'}`}>
-                {message.timestamp}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Handle submit
-  const handleSubmit = () => {
-    simulateChat();
-  };
-
-  // Sidebar component
-  const Sidebar = () => (
-    <motion.div
-      initial={{ x: -300 }}
-      animate={{ x: isSidebarOpen ? 0 : -300 }}
-      transition={{ duration: 0.3 }}
-      className="fixed top-0 left-0 h-full w-64 bg-white/95 backdrop-blur-lg shadow-xl border-r border-gray-200 z-50 lg:static lg:translate-x-0"
-    >
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-8">
-          <h2 className="text-xl font-bold text-gray-900">Dashboard Menu</h2>
-          <button
-            onClick={toggleSidebar}
-            className="p-2 rounded-full hover:bg-gray-100 lg:hidden"
-          >
-            <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <nav className="space-y-2">
-          <a
-            href="#overview"
-            className="flex items-center p-3 rounded-lg hover:bg-blue-50 text-gray-700 hover:text-blue-600 transition-colors"
-          >
-            <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-            </svg>
-            Overview
-          </a>
-          <a
-            href="#analytics"
-            className="flex items-center p-3 rounded-lg hover:bg-blue-50 text-gray-700 hover:text-blue-600 transition-colors"
-          >
-            <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            Analytics
-          </a>
-          <a
-            href="#diseases"
-            className="flex items-center p-3 rounded-lg hover:bg-blue-50 text-gray-700 hover:text-blue-600 transition-colors"
-          >
-            <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-            Diseases
-          </a>
-          <a
-            href="#chat"
-            className="flex items-center p-3 rounded-lg hover:bg-blue-50 text-gray-700 hover:text-blue-600 transition-colors"
-          >
-            <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-            </svg>
-            AI Chat
-          </a>
-          <a
-            href="#settings"
-            className="flex items-center p-3 rounded-lg hover:bg-blue-50 text-gray-700 hover:text-blue-600 transition-colors"
-          >
-            <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            Settings
-          </a>
-        </nav>
-      </div>
-    </motion.div>
+      try {
+        await handleSendMessage({
+          input,
+          setMessages: (updateFn) => {
+            setMessages((prev) => {
+              const withoutTyping = prev.filter(msg => msg.type !== 'typing');
+              return typeof updateFn === 'function' ? updateFn(withoutTyping) : updateFn;
+            });
+          },
+          setInput: () => {},
+          apiEndpoint: API_CONFIG.chatEndpoint,
+          onChartData: (newCharts) => {
+            const chartsWithIds = newCharts.map((chart) => ({
+              ...chart,
+              id: uuidv4(),
+            }));
+            
+            setCharts(chartsWithIds);
+          },
+        });
+      } catch (error) {
+        console.error('Error sending message:', error);
+        setMessages((prev) => {
+          const withoutTyping = prev.filter(msg => msg.type !== 'typing');
+          return [
+            ...withoutTyping,
+            {
+              id: uuidv4(),
+              sender: 'bot',
+              type: 'text',
+              text: 'Sorry, I encountered an error while processing your request. Please try again.',
+              timestamp: new Date(),
+            },
+          ];
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    []
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex">
-      {/* Sidebar */}
-      <Sidebar />
+    <div className="flex h-screen bg-gray-50 text-gray-800 overflow-hidden">
+      <Sidebar 
+        isOpen={isSidebarOpen} 
+        onClose={() => setIsSidebarOpen(false)}
+        onShowFullGuide={() => {
+          setIsSidebarOpen(false);
+          setShowFullGuide(true);
+        }}
+      />
 
-      {/* Main Content */}
-      <div className="flex-1 container mx-auto px-4 py-8">
-        {/* Mobile Sidebar Toggle */}
-        <div className="lg:hidden mb-6">
-          <button
-            onClick={toggleSidebar}
-            className="p-3 rounded-lg bg-white/80 backdrop-blur-sm border border-gray-200 hover:bg-blue-50 transition-colors"
-          >
-            <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-        </div>
-
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="text-center mb-12"
-          id="overview"
-        >
-          <div className="relative">
-            <div className="absolute inset-0 bg-white/30 backdrop-blur-lg rounded-3xl -z-10" />
-            <div className="absolute top-0 left-1/4 w-16 h-16 bg-blue-400/10 rounded-full filter blur-xl" />
-            <div className="absolute bottom-0 right-1/4 w-20 h-20 bg-purple-400/10 rounded-full filter blur-xl" />
-            <div className="p-8 rounded-2xl bg-gradient-to-br from-white/50 to-white/20 border border-white/30 shadow-lg">
-              <motion.h1
-                initial={{ scale: 0.95 }}
-                animate={{ scale: 1 }}
-                transition={{ duration: 0.5, delay: 0.2 }}
-                className="text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-800 to-blue-600 mb-3"
+        <header className="bg-white shadow-sm z-10">
+          <div className="flex items-center justify-between p-4">
+            <button
+              onClick={toggleSidebar}
+              className="md:hidden p-2 rounded-md text-gray-500 hover:bg-gray-100 focus:outline-none transition-colors"
+              aria-label="Toggle Sidebar"
+            >
+              {isSidebarOpen ? <FiX size={24} /> : <FiMenu size={24} />}
+            </button>
+            <h1 className="text-lg font-semibold hidden md:block">Disease Analytics</h1>
+            <h2 className="text-lg font-semibold block md:hidden">Disease Analytics Assistant</h2>
+            {showFullGuide && (
+              <button
+                onClick={() => setShowFullGuide(false)}
+                className="flex items-center text-sm text-indigo-600 hover:text-indigo-800"
               >
-                Disease Data Analysis Dashboard
-              </motion.h1>
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.5, delay: 0.4 }}
-                className="text-xl text-gray-700/90 font-medium"
-              >
-                <span className="inline-block relative">
-                  Analyze disease patterns with
-                  <span className="absolute -bottom-1 left-0 w-full h-0.5 bg-blue-400/30 animate-pulse" />
-                </span>
-                <span className="inline-flex ml-2 items-center bg-blue-100/50 text-blue-600 px-3 py-1 rounded-full text-sm font-semibold">
-                  AI-powered
-                  <svg
-                    className="w-4 h-4 ml-1 animate-bounce"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </span>
-                <span className="inline-block relative ml-2">
-                  insights
-                  <span className="absolute -bottom-1 left-0 w-full h-0.5 bg-purple-400/30 animate-pulse delay-100" />
-                </span>
-              </motion.p>
-            </div>
-          </div>
-          <div className="flex justify-center mt-6 space-x-2">
-            {[1, 2, 3].map((dot) => (
-              <motion.div
-                key={dot}
-                animate={{ y: [0, -5, 0] }}
-                transition={{
-                  duration: 1.5,
-                  repeat: Infinity,
-                  repeatType: 'loop',
-                  delay: dot * 0.2,
-                }}
-                className="w-2 h-2 bg-gray-400/50 rounded-full"
-              />
-            ))}
-          </div>
-        </motion.div>
-
-        {/* Summary Statistics */}
-        {summary && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5 }}
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"
-            id="analytics"
-          >
-            <motion.div
-              whileHover={{ y: -5 }}
-              className="bg-white/80 backdrop-blur-sm rounded-xl shadow-sm p-6 border border-white/30 hover:shadow-md transition-all"
-            >
-              <div className="flex items-center">
-                <motion.div
-                  animate={{ rotate: [0, 5, -5, 0] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                  className="p-3 rounded-xl bg-blue-100/50 text-blue-600 backdrop-blur-sm"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                    />
-                  </svg>
-                </motion.div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Total Diseases</p>
-                  <p className="text-2xl font-bold text-gray-900">{summary.totalDiseases}</p>
-                </div>
-              </div>
-              <div className="mt-4 h-1 bg-gradient-to-r from-blue-400/20 to-transparent rounded-full"></div>
-            </motion.div>
-            <motion.div
-              whileHover={{ y: -5 }}
-              className="bg-white/80 backdrop-blur-sm rounded-xl shadow-sm p-6 border border-white/30 hover:shadow-md transition-all"
-            >
-              <div className="flex items-center">
-                <motion.div
-                  animate={{ scale: [1, 1.05, 1] }}
-                  transition={{ duration: 3, repeat: Infinity }}
-                  className="p-3 rounded-xl bg-green-100/50 text-green-600 backdrop-blur-sm"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"
-                    />
-                  </svg>
-                </motion.div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Total Responders</p>
-                  <p className="text-2xl font-bold text-gray-900">{summary.totalResponders}</p>
-                </div>
-              </div>
-              <div className="mt-4 h-1 bg-gradient-to-r from-green-400/20 to-transparent rounded-full"></div>
-            </motion.div>
-            <motion.div
-              whileHover={{ y: -5 }}
-              className="bg-white/80 backdrop-blur-sm rounded-xl shadow-sm p-6 border border-white/30 hover:shadow-md transition-all"
-            >
-              <div className="flex items-center">
-                <motion.div
-                  animate={{ rotate: [0, 10, -10, 0] }}
-                  transition={{ duration: 4, repeat: Infinity }}
-                  className="p-3 rounded-xl bg-purple-100/50 text-purple-600 backdrop-blur-sm"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                </motion.div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Active Surveys</p>
-                  <p className="text-2xl font-bold text-gray-900">{summary.diseases?.length || 0}</p>
-                </div>
-              </div>
-              <div className="mt-4 h-1 bg-gradient-to-r from-purple-400/20 to-transparent rounded-full"></div>
-            </motion.div>
-            <motion.div
-              whileHover={{ y: -5 }}
-              className="bg-white/80 backdrop-blur-sm rounded-xl shadow-sm p-6 border border-white/30 hover:shadow-md transition-all"
-            >
-              <div className="flex items-center">
-                <motion.div
-                  animate={{ y: [0, -3, 0] }}
-                  transition={{ duration: 3, repeat: Infinity }}
-                  className="p-3 rounded-xl bg-yellow-100/50 text-yellow-600 backdrop-blur-sm"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M3 10h11M9 21V3m12 6h-4m4 4h-4m4 4h-4"
-                    />
-                  </svg>
-                </motion.div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Total Responses</p>
-                  <p className="text-2xl font-bold text-gray-900">{summary.totalResponses}</p>
-                </div>
-              </div>
-              <div className="mt-4 h-1 bg-gradient-to-r from-yellow-400/20 to-transparent rounded-full"></div>
-            </motion.div>
-          </motion.div>
-        )}
-
-        {/* Disease Overview */}
-        {summary && summary.diseases && (
-          <div id="diseases" className="bg-white/90 backdrop-blur-sm rounded-xl shadow-sm p-6 mb-8 border border-gray-100 transition-all duration-300 hover:shadow-md">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-semibold text-gray-900 bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
-                Disease Overview
-              </h2>
-              <span className="text-xs font-medium px-3 py-1 rounded-full bg-blue-50 text-blue-600 animate-pulse">
-                {summary.diseases.length} {summary.diseases.length > 1 ? 'Diseases' : 'Disease'} Tracked
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {summary.diseases.map((disease: Summary['diseases'][number], index: number) => (
-                <motion.div
-                  key={disease.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, delay: index * 0.1 }}
-                  whileHover={{ y: -5, boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)' }}
-                  className="border border-gray-100 rounded-xl p-5 bg-white hover:bg-gray-50 transition-all duration-200 group"
-                >
-                  <div className="flex items-start mb-3">
-                    <div className="p-2 rounded-lg bg-blue-100/50 group-hover:bg-blue-100 transition-colors duration-200 mr-3">
-                      <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-                        />
-                      </svg>
-                    </div>
-                    <h3 className="text-lg font-medium text-gray-900 capitalize mt-1">{disease.name}</h3>
-                  </div>
-                  <p className="text-sm text-gray-600 pl-11">
-                    {disease.description || 'Climate-related health condition being actively monitored.'}
-                  </p>
-                  <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
-                    <button className="text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors flex items-center">
-                      Learn more
-                      <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Chat Interface */}
-        <div id="chat" className="bg-white/90 backdrop-blur-lg rounded-3xl shadow-xl border border-white/50 h-[1000px] flex flex-col overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-gray-800 to-gray-900 text-white rounded-t-3xl">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-              <div className={`w-3 h-3 rounded-full ${isAnimating ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`}></div>
-                <h3 className="font-semibold">AI Data Analyst</h3>
-              </div>
-              <div className="text-sm opacity-75">Live Analysis</div>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            {chatMessages.length === 0 ? (
-              <div className="flex items-center justify-center h-full text-gray-500">
-                <div className="text-center">
-                  <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="1"
-                      d="M5 3h14a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2zm2 6h10m-5-4v8m-7-3l2-2m0 0l2 2"
-                    />
-                  </svg>
-                  <p className="text-lg font-medium">Ready for Analysis</p>
-                  <p className="text-sm">Submit your query to see the AI in action</p>
-                </div>
-              </div>
-            ) : (
-              chatMessages.map((message, index) => (
-                <ChatMessage key={index} message={message} index={index} />
-              ))
+                <FiX className="mr-1" /> Close Guide
+              </button>
             )}
           </div>
-          <div className="p-6 border-t border-gray-200">
-            <div className="relative">
-              <textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="e.g., Show me the correlation between Malaria, Cholera and age/gender using bar and line charts"
-                className="w-full px-6 pr-28 py-4 rounded-2xl border-2 border-gray-200 focus:border-blue-400 bg-gray-50 focus:bg-white text-gray-900 transition-all duration-300 resize-none placeholder:text-gray-400 outline-none"
-                rows={2}
-              />
-              <button
-                onClick={handleSubmit}
-                disabled={loading}
-                className="absolute right-4 top-1/2 -translate-y-1/2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
-              >
-                {loading ? (
-                  <span className="flex items-center">
-                    <svg
-                      className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                    Processing...
-                  </span>
-                ) : (
-                  <span className="flex items-center">
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    Analyze
-                  </span>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
+        </header>
 
-        {/* Instructions */}
-        <div id="settings" className="bg-white rounded-xl shadow-lg p-6 mt-8 border border-gray-100 transform transition-all hover:scale-[1.01] hover:shadow-xl">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-            <svg
-              className="w-6 h-6 text-blue-500 mr-2 animate-pulse"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            How to Use This Tool
-          </h2>
-          <div className="space-y-4 text-gray-700">
-            <div className="p-4 bg-blue-50 rounded-lg animate-fade-in group relative">
-              <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={() => navigator.clipboard.writeText('Show correlation between Malaria, Cholera and age/gender using bar and line charts')}
-                  className="text-xs flex items-center px-2 py-1 bg-white/90 rounded-md border border-gray-200 shadow-sm hover:bg-blue-50 transition-all"
-                >
-                  <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
-                    />
-                  </svg>
-                  Copy
-                </button>
-              </div>
-              <h3 className="font-semibold text-blue-800 mb-2 flex items-center">
-                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                  <path
-                    fillRule="evenodd"
-                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                Data Visualization
-              </h3>
-              <p className="text-gray-800">
-                Include diseases (<span className="font-medium">malaria, cholera, heat stress</span>), variables (
-                <span className="font-medium">age, gender, season</span>), and chart types (
-                <span className="font-medium">bar, line, pie</span>) in your query.
-              </p>
-              <div className="mt-3 p-3 bg-white rounded-md border border-blue-100 animate-pulse-slow flex justify-between items-center">
-              <p className="text-sm font-mono text-blue-600">
-                <span className="text-gray-500">Example:</span> &quot;Show correlation between Malaria, Cholera and age/gender using bar and line charts&quot;
-              </p>
-                <button
-                  onClick={() => navigator.clipboard.writeText('Show correlation between Malaria, Cholera and age/gender using bar and line charts')}
-                  className="text-xs flex items-center px-2 py-1 ml-2 bg-blue-50 rounded border border-blue-100 hover:bg-blue-100 transition-colors"
-                >
-                  <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
-                    />
-                  </svg>
-                  Copy
-                </button>
-              </div>
+        {/* Main Content */}
+        <main className="flex-1 overflow-auto relative">
+          {showFullGuide ? (
+            <div className="absolute inset-0 bg-white z-10 p-4 md:p-6">
+              <FullGuide onClose={() => setShowFullGuide(false)} />
             </div>
-            <div className="p-4 bg-green-50 rounded-lg animate-fade-in delay-100">
-              <h3 className="font-semibold text-green-800 mb-2 flex items-center">
-                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                </svg>
-                General Questions
-              </h3>
-              <p className="text-gray-800">Ask any question about the data or diseases. The system will analyze available information and provide insights.</p>
-            </div>
-            <div className="p-4 bg-purple-50 rounded-lg animate-fade-in delay-200">
-              <h3 className="font-semibold text-purple-800 mb-3 flex items-center">
-                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                  <path
-                    fillRule="evenodd"
-                    d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V4a2 2 0 00-2-2H6zm1 2a1 1 0 000 2h6a1 1 0 100-2H7zm6 7a1 1 0 011 1v3a1 1 0 11-2 0v-3a1 1 0 011-1zm-3 3a1 1 0 100 2h.01a1 1 0 100-2H10zm-4 1a1 1 0 011-1h.01a1 1 0 110 2H7a1 1 0 01-1-1zm1-4a1 1 0 100 2h.01a1 1 0 100-2H7zm2 1a1 1 0 011-1h.01a1 1 0 110 2H10a1 1 0 01-1-1zm4-4a1 1 0 100 2h.01a1 1 0 100-2H13zM9 9a1 1 0 011-1h.01a1 1 0 110 2H10a1 1 0 01-1-1zM7 8a1 1 0 000 2h.01a1 1 0 000-2H7z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                Variables Explained
-              </h3>
-              <ul className="space-y-2">
-                <li className="flex items-start">
-                  <span className="inline-block bg-white p-1 rounded-full mr-2 border border-purple-200">
-                    <svg className="w-3 h-3 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
-                      <circle cx="10" cy="10" r="5" />
-                    </svg>
-                  </span>
-                  <span><strong className="text-gray-900">Age:</strong> Above 35 years vs Below 35 years</span>
-                </li>
-                <li className="flex items-start">
-                  <span className="inline-block bg-white p-1 rounded-full mr-2 border border-purple-200">
-                    <svg className="w-3 h-3 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
-                      <circle cx="10" cy="10" r="5" />
-                    </svg>
-                  </span>
-                  <span><strong className="text-gray-900">Gender:</strong> Male vs Female</span>
-                </li>
-                <li className="flex items-start">
-                  <span className="inline-block bg-white p-1 rounded-full mr-2 border border-purple-200">
-                    <svg className="w-3 h-3 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
-                      <circle cx="10" cy="10" r="5" />
-                    </svg>
-                  </span>
-                  <span><strong className="text-gray-900">Season:</strong> Rainy Season (April-October) vs Dry Season (November-March)</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
+          ) : (
+            <Chat 
+              messages={messages} 
+              onSendMessage={handleSendMessageWrapper} 
+              isLoading={isLoading} 
+            />
+          )}
+        </main>
       </div>
 
-      <style jsx>{`
-        @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        .animate-fadeInUp {
-          animation: fadeInUp 0.6s ease-out forwards;
-        }
-        @keyframes fade-in {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        .animate-fade-in {
-          animation: fade-in 0.5s ease-out;
-        }
-        .delay-100 {
-          animation-delay: 0.1s;
-        }
-        .delay-200 {
-          animation-delay: 0.2s;
-        }
-        @keyframes pulse-slow {
-          0% { opacity: 1; }
-          50% { opacity: 0.7; }
-          100% { opacity: 1; }
-        }
-        .animate-pulse-slow {
-          animation: pulse-slow 2s infinite;
-        }
-      `}</style>
+      {/* Mobile overlay */}
+      {isSidebarOpen && isMobile && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-20"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
     </div>
   );
 };
 
-export default Dashboard;
+export default ChatApp;

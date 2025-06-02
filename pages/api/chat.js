@@ -3,8 +3,8 @@ import { createParser } from 'eventsource-parser';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
 });
+
 
 export default async function handler(req, res) {
   // Set CORS headers
@@ -12,15 +12,14 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'POST');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // Handle OPTIONS request for CORS preflight
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ 
+    return res.status(405).json({
       error: 'Method not allowed',
-      message: 'Only POST requests are accepted' 
+      message: 'Only POST requests are accepted'
     });
   }
 
@@ -28,18 +27,18 @@ export default async function handler(req, res) {
     const { message, isJSONRequest, stream } = req.body;
 
     if (!message) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Bad request',
-        message: 'Message is required' 
+        message: 'Message is required'
       });
     }
 
-    // Detect if this is a general question (not visualization request)
-    const isGeneralQuestion = !isJSONRequest && !isVisualizationQuery(message);
+    const isVisualizationRequest = isVisualizationQuery(message);
+    const isGeneralQuestion = !isJSONRequest && !isVisualizationRequest;
 
-    // System prompt configuration
-    let systemPrompt, responseFormat;
-    
+    let systemPrompt;
+    let responseFormat = null;
+
     if (isJSONRequest) {
       systemPrompt = `You are a JSON response generator for a disease data analysis dashboard. 
       Respond STRICTLY with valid JSON in this exact format:
@@ -58,22 +57,7 @@ export default async function handler(req, res) {
       5. If no chart type specified, default to ["bar"]`;
 
       responseFormat = { type: "json_object" };
-    } else if (isGeneralQuestion) {
-      systemPrompt = `You are a knowledgeable medical assistant specializing in malaria, cholera, and heat stress.
-      Provide clear, accurate information about:
-      - Disease symptoms and prevention
-      - Treatment options
-      - Climate change impacts on health
-      - General health advice
-      - Data analysis concepts
-      
-      For questions about this dashboard's data:
-      - We cover Bariga, Lagos, Nigeria
-      - Data includes age, gender, seasonal patterns
-      - Available diseases: malaria, cholera, heat stress
-      
-      Keep responses professional yet accessible. Cite sources when possible.`;
-    } else {
+    } else if (isVisualizationRequest) {
       systemPrompt = `You are a helpful assistant for a disease data analysis dashboard. 
       The system analyzes data for malaria, cholera, and heat stress.
 
@@ -88,9 +72,17 @@ export default async function handler(req, res) {
       3. Chart types (default: bar)
 
       Example: "Show malaria cases by age and gender using pie charts"`;
+    } else {
+      systemPrompt = `You are a highly knowledgeable and versatile assistant capable of answering a wide range of questions accurately and concisely. 
+      Provide clear, professional, and accessible responses. 
+      If the question relates to the disease data analysis dashboard (covering malaria, cholera, heat stress in Bariga, Lagos, Nigeria), include relevant context about:
+      - Available diseases: malaria, cholera, heat stress
+      - Variables: age, gender, season
+      - Data scope: Bariga, Lagos, Nigeria
+      For all other topics, provide general knowledge or insights based on your capabilities. Cite sources when possible.`;
     }
 
-    // Handle streaming response
+    // Handle streaming
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -102,10 +94,10 @@ export default async function handler(req, res) {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message }
         ],
-        response_format: responseFormat,
+        ...(responseFormat ? { response_format: responseFormat } : {}),
         stream: true,
-        max_tokens: 1000,
-        temperature: isGeneralQuestion ? 0.3 : 0.7, // More deterministic for factual answers
+        max_tokens: 1500,
+        temperature: isGeneralQuestion ? 0.5 : 0.7,
       });
 
       const parser = createParser(event => {
@@ -131,28 +123,27 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Handle regular response
+    // Non-streaming response
     const completion = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: message }
       ],
-      response_format: responseFormat,
-      max_tokens: 1000,
-      temperature: isGeneralQuestion ? 0.3 : 0.7,
+      ...(responseFormat ? { response_format: responseFormat } : {}),
+      max_tokens: 1500,
+      temperature: isGeneralQuestion ? 0.5 : 0.7,
     });
 
     let reply = completion.choices[0]?.message?.content || '';
 
-    // Clean JSON response if needed
     if (isJSONRequest) {
       reply = reply.replace(/```json|```/g, '').trim();
       try {
         reply = JSON.parse(reply);
       } catch (e) {
         console.error('Error parsing AI-generated JSON:', e);
-        return res.status(500).json({ 
+        return res.status(500).json({
           error: 'Invalid JSON response from AI',
           details: 'The AI failed to generate valid JSON format'
         });
@@ -163,7 +154,7 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('API Error:', error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: 'Internal server error',
       details: error.message,
       type: error.type || 'unknown_error'
@@ -174,23 +165,23 @@ export default async function handler(req, res) {
 // Helper function to detect visualization queries
 function isVisualizationQuery(message) {
   const visualizationKeywords = [
-    'show', 'display', 'visualize', 'graph', 'chart', 
+    'show', 'display', 'visualize', 'graph', 'chart',
     'plot', 'correlation', 'comparison', 'trend',
     'bar', 'line', 'pie', 'data', 'analyze'
   ];
-  
+
   const diseaseKeywords = [
     'malaria', 'cholera', 'heat stress', 'disease'
   ];
-  
-  const hasVisualizationKeyword = visualizationKeywords.some(keyword => 
+
+  const hasVisualizationKeyword = visualizationKeywords.some(keyword =>
     message.toLowerCase().includes(keyword)
   );
-  
-  const hasDiseaseKeyword = diseaseKeywords.some(keyword => 
+
+  const hasDiseaseKeyword = diseaseKeywords.some(keyword =>
     message.toLowerCase().includes(keyword)
   );
-  
+
   return hasVisualizationKeyword && hasDiseaseKeyword;
 }
 

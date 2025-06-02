@@ -21,8 +21,8 @@ import {
   };
   
   // Valid data types
-  const VALID_TYPES = new Set(['analytics', 'diseases', 'questions', 'summary']);
-  
+  const VALID_TYPES = new Set(['analytics', 'diseases', 'questions', 'summary', 'general']);
+
   export default async function handler(req, res) {
     if (req.method !== 'GET') {
       return res.status(405).json({ 
@@ -47,9 +47,10 @@ import {
       const diseaseList = diseases 
         ? diseases.split(',').map(d => d.trim().toLowerCase()).filter(Boolean)
         : [];
-      const variableList = variables 
-        ? variables.split(',').map(v => v.trim().toLowerCase()).filter(Boolean)
+        const variableList = variables 
+        ? variables.split(',').map(v => v.trim()).filter(Boolean)
         : [];
+      
   
       // Process request based on type
       switch (type) {
@@ -118,6 +119,69 @@ import {
             data: questionsData
           });
         }
+        
+        case 'general': {
+            const { question } = req.query;
+          
+            if (!question) {
+              return res.status(400).json({
+                error: 'Missing question',
+                message: 'A question must be provided via the `question` query parameter.'
+              });
+            }
+          
+            const openai = new (await import('openai')).default({
+              apiKey: process.env.OPENAI_API_KEY,
+              baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+            });
+          
+            const systemPrompt = `You are a highly knowledgeable assistant for a disease data dashboard in Bariga, Lagos. 
+            Answer general or contextual questions clearly. Mention the available diseases (malaria, cholera, heat stress), 
+            and only refer to the following valid variables:
+            
+            - gender (e.g. male or female)
+            - age (e.g. older than 35)
+            - season (e.g. rainy season)
+            - familySize (e.g. more than four people in a household)
+            - climateChangeAwareness (e.g. awareness about climate change)
+            - location (e.g. visited a health facility)
+            - malariaTreatmentLastYear (e.g. treated for malaria last year)
+            - malariaIncrease (e.g. more malaria cases last year than the previous)
+            - weatherImpact (e.g. weather conditions affecting health)
+            - preventionTipsInterest (e.g. interest in malaria prevention tips)
+            
+            If a user’s question includes **a disease and one or more of these variables**, return a JSON object with:
+            - chartTypes: "bar" (default) return as a list
+            - diseases: (from user input)
+            - variables: (from user input)
+            - title: a descriptive string of the chart context
+            
+            If the prompt also mentions a **specific chart type** (bar, line,histogram or pie), use that chart type in the JSON instead of the default.
+            If prompt has only a variable or variables or both variable/variables and chart then use all diseases for plotting
+            If promt has only variables without a chart type then plot all diseases and default chart
+            All responses for chart questions must return JSON formatted for direct frontend rendering and the it should only json, no extra description.
+            
+            If the question is unrelated, respond accurately and professionally with plain text.`;
+            
+
+          
+            const completion = await openai.chat.completions.create({
+              model: process.env.OPENAI_MODEL || 'gpt-4o',
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: question }
+              ],
+              max_tokens: 1000,
+              temperature: 0.6
+            });
+          
+            const answer = completion.choices[0]?.message?.content || 'No response generated.';
+          
+            return res.status(200).json({
+              success: true,
+              reply: answer
+            });
+          }
           
         case 'summary': {
           const now = Date.now();

@@ -17,6 +17,6 @@
       "@/*": ["./*"]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", "pages/index_", "pages/components/AnimatedChatInterface", "pages/components/Sidebar"],
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", "pages/index_.tsx", "pages/components/Chat.tsx", "pages/components/Sidebar.tsx", "pages/index", "pages/components/chart"],
   "exclude": ["node_modules"]
 }

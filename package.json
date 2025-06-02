@@ -15,6 +15,7 @@
     "eventsource-parser": "^3.0.2",
     "framer-motion": "^12.13.0",
     "html-to-image": "^1.11.13",
+    "html2canvas": "^1.4.1",
     "mysql2": "^3.14.1",
     "next": "15.1.8",
     "openai": "^4.103.0",
@@ -23,7 +24,8 @@
     "react-dom": "^19.0.0",
     "react-icons": "^5.5.0",
     "react-router-dom": "^7.6.1",
-    "recharts": "^2.15.3"
+    "recharts": "^2.15.3",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
