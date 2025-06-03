@@ -132,7 +132,7 @@ import {
           
             const openai = new (await import('openai')).default({
               apiKey: process.env.OPENAI_API_KEY,
-              baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+              baseURL: process.env.NEXT_PUBLIC_OPENAI_BASE_URL || 'https://api.openai.com/v1',
             });
           
             const systemPrompt = `You are a highly knowledgeable assistant for a disease data dashboard in Bariga, Lagos. 

@@ -82,7 +82,8 @@ const fetchAnalyticsData = async (
     console.log('Fetching analytics data for:', { diseases, variables });
     const diseasesParam = encodeURIComponent(diseases.join(','));
     const variablesParam = encodeURIComponent(variables.join(','));
-    const url = `http://localhost:3000/api/data?type=analytics&diseases=${diseasesParam}&variables=${variablesParam}`;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+    const url = `${apiUrl}/api/data?type=analytics&diseases=${diseasesParam}&variables=${variablesParam}`;
     
     const response = await fetch(url);
     if (!response.ok) {

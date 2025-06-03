@@ -4,7 +4,8 @@ import { Message, ApiResponse } from '../types/chat';
 
 export const sendMessage = async (message: string): Promise<Message> => {
   const encodedQuestion = encodeURIComponent(message);
-  const url = `http://localhost:3000/api/data?type=general&question=${encodedQuestion}`;
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+const url = `${apiUrl}/api/data?type=general&question=${encodedQuestion}`;
 
   try {
     const res = await fetch(url);
